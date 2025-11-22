@@ -135,27 +135,6 @@ GitHub Secrets required:
 2. Top Bar - News-style top bar with text
 3. Karaoke - Word-by-word highlighting
 
-## Hinglish Support
-
-Supports mixed Hindi and English text using Noto Sans fonts:
-
-- "नमस्ते, welcome to our platform"
-- "यह video बहुत अच्छा है"
-
-## Cost Estimation
-
-AWS ECS Fargate (24/7):
-
-- Backend: ~$15/month
-- Remotion: ~$30/month
-- Total: ~$45/month
-
-S3 Storage: Pay per use
-
-## License
-
-MIT License
-
 ## Contact
 
 Abhishek Chaurasiya
