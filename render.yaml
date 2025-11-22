@@ -1,0 +1,40 @@
+services:
+  - type: web
+    name: remotion-service
+    runtime: docker
+    dockerfilePath: ./remotion-app/Dockerfile
+    dockerContext: ./remotion-app
+    plan: starter
+    envVars:
+      - key: PORT
+        value: 3000
+      - key: BACKEND_URL
+        fromService:
+          type: web
+          name: captioning-backend
+          property: host
+
+  - type: web
+    name: captioning-backend
+    runtime: docker
+    dockerfilePath: ./backend-go/Dockerfile
+    dockerContext: ./backend-go
+    plan: starter
+    envVars:
+      - key: ASSEMBLYAI_KEY
+        sync: false
+      - key: S3_BUCKET
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_REGION
+        value: us-east-1
+      - key: RENDER_REMOTION_URL
+        fromService:
+          type: web
+          name: remotion-service
+          property: host
+      - key: BACKEND_URL
+        value: https://captioning-backend.onrender.com
