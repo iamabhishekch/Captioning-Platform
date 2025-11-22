@@ -1,0 +1,35 @@
+{
+  "name": "remotion-captioning-app",
+  "version": "1.0.0",
+  "description": "Minimal Remotion service for video captioning",
+  "scripts": {
+    "dev": "remotion preview",
+    "render": "remotion render",
+    "server": "node server/index.js",
+    "test": "jest",
+    "lint": "eslint src/**/*.{ts,tsx}",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.0",
+    "@remotion/player": "^4.0.0",
+    "remotion": "^4.0.0",
+    "express": "^4.18.2",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/jest": "^29.5.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.45.0",
+    "jest": "^29.5.0",
+    "ts-jest": "^29.1.0",
+    "typescript": "^5.0.0"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "testMatch": ["**/*.test.ts", "**/*.test.tsx"]
+  }
+}

@@ -1,0 +1,38 @@
+services:
+  backend:
+    build:
+      context: ./backend-go
+      dockerfile: Dockerfile
+    container_name: captioning-backend
+    ports:
+      - "7070:7070"
+    environment:
+      - ASSEMBLYAI_KEY=${ASSEMBLYAI_KEY}
+      - RENDER_REMOTION_URL=http://remotion:3000
+      - RENDER_API_KEY=${RENDER_API_KEY}
+      - S3_BUCKET=${S3_BUCKET}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION}
+      - BACKEND_URL=http://backend:7070
+    networks:
+      - captioning-network
+    depends_on:
+      - remotion
+
+  remotion:
+    build:
+      context: ./remotion-app
+      dockerfile: Dockerfile
+    container_name: remotion-service
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - BACKEND_URL=http://backend:7070
+    networks:
+      - captioning-network
+
+networks:
+  captioning-network:
+    driver: bridge

@@ -1,0 +1,5 @@
+uploads/
+captions/
+main
+*.log
+.env

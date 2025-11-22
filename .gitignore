@@ -1,0 +1,64 @@
+# Environment variables
+.env
+
+# Go
+backend-go/uploads/
+backend-go/captions/
+backend-go/main
+
+# Node
+node_modules/
+remotion-app/out/
+remotion-app/node_modules/
+remotion-app/props-*.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+logs/
+
+# Build outputs
+dist/
+build/
+
+# Runtime generated files
+backend-go/uploads/
+backend-go/captions/
+remotion-app/out/
+
+# AWS credentials
+*.csv
+*accessKeys*
+
+# Documentation (keep only README.md)
+*-CHECKLIST.md
+*-SUMMARY.md
+*-REPORT.md
+*-EXAMPLES.md
+ARCHITECTURE.md
+DEPLOYMENT.md
+DOCUMENTATION-INDEX.md
+ENV.md
+INDEX.md
+PASTE-TO-CHATGPT.md
+PROJECT-*.md
+QUICKSTART.md
+READY-FOR-SUBMISSION.md
+REPORT.md
+REVIEWER-README.md
+START-HERE.md
+UNIFIED-DIFFS.md
+AUDIT-*.md
+FIXES-*.md
+FINAL-*.md
+ISSUE-*.md

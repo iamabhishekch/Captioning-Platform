@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Captioning Platform</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div class="container mx-auto px-4 py-8 max-w-4xl">
+        <h1 class="text-4xl font-bold text-gray-900 mb-8">Video Captioning Platform</h1>
+        
+        <!-- Upload Section -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <h2 class="text-2xl font-semibold mb-4">1. Upload Video</h2>
+            <form id="upload-form" enctype="multipart/form-data" class="space-y-4">
+                <div>
+                    <input type="file" name="video" accept="video/mp4" 
+                           class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                           id="video-input" required>
+                </div>
+                <button type="submit" 
+                        class="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700 transition">
+                    Upload Video
+                </button>
+            </form>
+            <div id="upload-status" class="mt-4"></div>
+        </div>
+
+        <!-- Transcription Section -->
+        <div id="transcribe-section" class="bg-white rounded-lg shadow-md p-6 mb-6 hidden">
+            <h2 class="text-2xl font-semibold mb-4">2. Generate Captions</h2>
+            <button id="transcribe-btn" 
+                    class="bg-green-600 text-white px-6 py-2 rounded-md hover:bg-green-700 transition">
+                Auto-generate Captions
+            </button>
+            <div id="transcribe-status" class="mt-4"></div>
+        </div>
+
+        <!-- Captions Editor -->
+        <div id="captions-section" class="bg-white rounded-lg shadow-md p-6 mb-6 hidden">
+            <h2 class="text-2xl font-semibold mb-4">3. Edit Captions</h2>
+            <textarea id="captions-editor" 
+                      class="w-full h-64 p-4 border border-gray-300 rounded-md font-mono text-sm"
+                      placeholder="Captions will appear here..."></textarea>
+            <button id="save-captions-btn" 
+                    class="mt-4 bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700 transition">
+                Save Captions
+            </button>
+        </div>
+
+        <!-- Style Selection & Preview -->
+        <div id="render-section" class="bg-white rounded-lg shadow-md p-6 mb-6 hidden">
+            <h2 class="text-2xl font-semibold mb-4">4. Style & Preview</h2>
+            
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-2">Caption Style:</label>
+                <select id="style-select" class="block w-full p-2 border border-gray-300 rounded-md">
+                    <option value="bottom">Bottom Centered</option>
+                    <option value="top-bar">Top Bar</option>
+                    <option value="karaoke">Karaoke</option>
+                </select>
+            </div>
+
+            <div class="mb-4">
+                <h3 class="text-lg font-medium mb-2">Preview:</h3>
+                <div id="preview-area" class="bg-gray-100 p-4 rounded-md">
+                    <video id="preview-video" controls class="w-full max-w-2xl mx-auto"></video>
+                </div>
+            </div>
+
+            <button id="render-btn" 
+                    class="bg-purple-600 text-white px-6 py-2 rounded-md hover:bg-purple-700 transition">
+                Render Final MP4
+            </button>
+            <div id="render-status" class="mt-4"></div>
+        </div>
+    </div>
+
+    <script>
+        let uploadedFileUrl = '';
+        let uploadedS3Key = '';
+        let uploadedS3Url = '';
+        let uploadedPresignedUrl = '';
+        let captionsData = [];
+        let srtUrl = '';
+
+        // Upload handler
+        document.getElementById('upload-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const statusDiv = document.getElementById('upload-status');
+            
+            statusDiv.innerHTML = '<p class="text-blue-600">Uploading to S3...</p>';
+            
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                
+                if (data.fileUrl) {
+                    uploadedS3Url = data.fileUrl;
+                    uploadedS3Key = data.s3Key;
+                    uploadedFileUrl = data.fileUrl;
+                    statusDiv.innerHTML = `<p class="text-green-600">✓ Uploaded to S3 successfully!</p>`;
+                    document.getElementById('transcribe-section').classList.remove('hidden');
+                    
+                    // Get presigned URL for preview
+                    fetch('/get-presigned-url', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ s3Key: data.s3Key })
+                    }).then(res => res.json()).then(presignedData => {
+                        if (presignedData.url) {
+                            uploadedPresignedUrl = presignedData.url;
+                            document.getElementById('preview-video').src = presignedData.url;
+                        }
+                    });
+                } else {
+                    statusDiv.innerHTML = `<p class="text-red-600">Error: ${data.error}</p>`;
+                }
+            } catch (error) {
+                statusDiv.innerHTML = `<p class="text-red-600">Upload failed: ${error.message}</p>`;
+            }
+        });
+
+        // Transcribe handler
+        document.getElementById('transcribe-btn').addEventListener('click', async () => {
+            const statusDiv = document.getElementById('transcribe-status');
+            statusDiv.innerHTML = '<p class="text-blue-600">Transcribing... This may take a minute.</p>';
+            
+            try {
+                const response = await fetch('/transcribe', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        fileUrl: uploadedFileUrl,
+                        s3Key: uploadedS3Key
+                    })
+                });
+                const data = await response.json();
+                
+                if (data.captions) {
+                    captionsData = data.captions;
+                    srtUrl = data.srtUrl;
+                    
+                    // Display captions in editor
+                    const captionsText = data.captions.map((c, i) => 
+                        `${i + 1}\n${formatTime(c.start)} --> ${formatTime(c.end)}\n${c.text}\n`
+                    ).join('\n');
+                    
+                    document.getElementById('captions-editor').value = captionsText;
+                    statusDiv.innerHTML = '<p class="text-green-600">✓ Captions generated and saved to S3!</p>';
+                    document.getElementById('captions-section').classList.remove('hidden');
+                    document.getElementById('render-section').classList.remove('hidden');
+                } else {
+                    statusDiv.innerHTML = `<p class="text-red-600">Error: ${data.error}</p>`;
+                }
+            } catch (error) {
+                statusDiv.innerHTML = `<p class="text-red-600">Transcription failed: ${error.message}</p>`;
+            }
+        });
+
+        // Save captions handler
+        document.getElementById('save-captions-btn').addEventListener('click', () => {
+            alert('Captions saved! (In production, this would update the backend)');
+        });
+
+        // Render handler
+        document.getElementById('render-btn').addEventListener('click', async () => {
+            const statusDiv = document.getElementById('render-status');
+            const style = document.getElementById('style-select').value;
+            
+            statusDiv.innerHTML = '<p class="text-blue-600">Rendering... This may take a few minutes.</p>';
+            
+            try {
+                const response = await fetch('/render-job', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        videoUrl: uploadedS3Url,
+                        s3Key: uploadedS3Key,
+                        captions: captionsData,
+                        style: style
+                    })
+                });
+                const data = await response.json();
+                
+                if (data.success && data.s3_url) {
+                    statusDiv.innerHTML = `
+                        <p class="text-green-600 mb-2">✓ Video rendered and uploaded to S3!</p>
+                        <a href="${data.s3_url}" target="_blank" class="inline-block bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+                            View/Download from S3
+                        </a>
+                    `;
+                } else {
+                    statusDiv.innerHTML = `<p class="text-red-600">Render failed: ${data.error || 'Unknown error'}</p>`;
+                }
+            } catch (error) {
+                statusDiv.innerHTML = `<p class="text-red-600">Render failed: ${error.message}</p>`;
+            }
+        });
+
+        // Helper function to format time for SRT display
+        function formatTime(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = Math.floor(seconds % 60);
+            const millis = Math.floor((seconds % 1) * 1000);
+            return `${pad(hours)}:${pad(minutes)}:${pad(secs)},${pad(millis, 3)}`;
+        }
+
+        function pad(num, size = 2) {
+            return String(num).padStart(size, '0');
+        }
+    </script>
+</body>
+</html>
