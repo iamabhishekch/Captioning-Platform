@@ -54,3 +54,12 @@ jobs:
         run: |
           echo "Backend image pushed successfully"
           echo "Remotion image pushed successfully"
+
+      - name: Deploy to ECS
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: us-east-1
+        run: |
+          aws ecs update-service --cluster captioning-platform --service remotion-service --force-new-deployment
+          aws ecs update-service --cluster captioning-platform --service captioning-backend --force-new-deployment
