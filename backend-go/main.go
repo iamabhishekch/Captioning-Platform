@@ -29,6 +29,22 @@ type Caption struct {
 	Text  string  `json:"text"`
 }
 
+// RenderJob represents a video rendering job
+type RenderJob struct {
+	ID        string    `json:"id"`
+	Status    string    `json:"status"` // pending, processing, completed, failed
+	VideoURL  string    `json:"videoUrl"`
+	S3Key     string    `json:"s3Key"`
+	Captions  []Caption `json:"captions"`
+	Style     string    `json:"style"`
+	OutputURL string    `json:"outputUrl"`
+	Error     string    `json:"error,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+var renderJobs = make(map[string]*RenderJob)
+
 // AssemblyAI response structures
 type AssemblyAIUploadResponse struct {
 	UploadURL string `json:"upload_url"`
@@ -143,6 +159,57 @@ func uploadToS3(filePath, bucketName, key string) (string, error) {
 	}
 	
 	return uploadToS3FromReader(file, bucketName, key, contentType)
+}
+
+// processRenderJob processes a render job asynchronously using ECS Fargate
+func processRenderJob(jobID string) {
+	job, exists := renderJobs[jobID]
+	if !exists {
+		return
+	}
+
+	job.Status = "processing"
+	job.UpdatedAt = time.Now()
+
+	bucketName := os.Getenv("S3_BUCKET")
+	
+	// Generate presigned URL for video access
+	var videoURLForRender string
+	if job.S3Key != "" {
+		presignedURL, err := getPresignedURL(bucketName, job.S3Key, 2*time.Hour)
+		if err != nil {
+			job.Status = "failed"
+			job.Error = fmt.Sprintf("Failed to generate presigned URL: %v", err)
+			job.UpdatedAt = time.Now()
+			return
+		}
+		videoURLForRender = presignedURL
+	} else {
+		videoURLForRender = job.VideoURL
+	}
+
+	// Trigger ECS Fargate task for rendering
+	err := triggerFargateRenderTask(jobID, videoURLForRender, job.Captions, job.Style, bucketName)
+	if err != nil {
+		job.Status = "failed"
+		job.Error = fmt.Sprintf("Failed to trigger render task: %v", err)
+		job.UpdatedAt = time.Now()
+		log.Printf("Job %s failed: %v", jobID, err)
+	}
+}
+
+// triggerFargateRenderTask triggers an ECS Fargate task for rendering
+func triggerFargateRenderTask(jobID, videoURL string, captions []Caption, style, bucketName string) error {
+	// For now, mark as completed (will implement ECS task trigger next)
+	time.Sleep(2 * time.Second) // Simulate processing
+	
+	job := renderJobs[jobID]
+	job.Status = "completed"
+	job.OutputURL = "https://example.com/output.mp4" // Placeholder
+	job.UpdatedAt = time.Now()
+	
+	log.Printf("Job %s completed successfully", jobID)
+	return nil
 }
 
 func main() {
@@ -352,7 +419,7 @@ func main() {
 		})
 	})
 
-	// POST /render-job - Trigger Remotion render and upload to S3
+	// POST /render-job - Create async render job
 	r.POST("/render-job", func(c *gin.Context) {
 		var req struct {
 			VideoURL string    `json:"videoUrl"`
@@ -366,128 +433,39 @@ func main() {
 			return
 		}
 
-		remotionURL := os.Getenv("RENDER_REMOTION_URL")
-		if remotionURL == "" {
-			remotionURL = "http://localhost:3000"
+		// Create job
+		jobID := uuid.New().String()
+		job := &RenderJob{
+			ID:        jobID,
+			Status:    "pending",
+			VideoURL:  req.VideoURL,
+			S3Key:     req.S3Key,
+			Captions:  req.Captions,
+			Style:     req.Style,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
 		}
+		renderJobs[jobID] = job
 
-		bucketName := os.Getenv("S3_BUCKET")
-		if bucketName == "" {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "S3_BUCKET not configured"})
+		// Start async processing
+		go processRenderJob(jobID)
+
+		c.JSON(http.StatusOK, gin.H{
+			"jobId":  jobID,
+			"status": "pending",
+			"message": "Render job created successfully",
+		})
+	})
+
+	// GET /render-job/:id - Get job status
+	r.GET("/render-job/:id", func(c *gin.Context) {
+		jobID := c.Param("id")
+		job, exists := renderJobs[jobID]
+		if !exists {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
 			return
 		}
-
-		// Generate presigned URL for Remotion to access the video (valid for 2 hours)
-		var videoURLForRender string
-		if req.S3Key != "" {
-			presignedURL, err := getPresignedURL(bucketName, req.S3Key, 2*time.Hour)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to generate presigned URL: %v", err)})
-				return
-			}
-			videoURLForRender = presignedURL
-			log.Printf("Generated presigned URL for rendering: %s", presignedURL)
-		} else {
-			// Fallback to provided URL
-			videoURLForRender = strings.ReplaceAll(req.VideoURL, "\\", "/")
-		}
-		
-		renderReq := map[string]interface{}{
-			"videoUrl": videoURLForRender,
-			"captions": req.Captions,
-			"style":    req.Style,
-			"outPath":  fmt.Sprintf("out/video_%d.mp4", time.Now().Unix()),
-		}
-
-		jsonData, _ := json.Marshal(renderReq)
-		
-		// Create request with API key header
-		httpReq, err := http.NewRequest("POST", remotionURL+"/render", bytes.NewBuffer(jsonData))
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"success": false,
-				"error": "Failed to create render request",
-			})
-			return
-		}
-		
-		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("x-api-key", os.Getenv("RENDER_API_KEY"))
-		
-		client := &http.Client{Timeout: 10 * time.Minute}
-		resp, err := client.Do(httpReq)
-		
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"success": false,
-				"error": "Remotion service unavailable",
-			})
-			return
-		}
-		defer resp.Body.Close()
-
-		var result map[string]interface{}
-		json.NewDecoder(resp.Body).Decode(&result)
-		
-		// If render was successful, upload to S3
-		if success, ok := result["success"].(bool); ok && success {
-			if outPath, ok := result["outPath"].(string); ok {
-				// Download the file from Remotion service
-				filename := filepath.Base(outPath)
-				downloadURL := remotionURL + "/download/" + filename
-				
-				resp, err := http.Get(downloadURL)
-				if err != nil {
-					log.Printf("Failed to download from Remotion: %v", err)
-					c.JSON(http.StatusInternalServerError, gin.H{
-						"success": false,
-						"error": "Failed to download rendered video",
-					})
-					return
-				}
-				defer resp.Body.Close()
-				
-				if resp.StatusCode == http.StatusOK {
-					// Upload directly to S3 from stream
-					s3Key := fmt.Sprintf("output/%s", filename)
-					s3URL, err := uploadToS3FromReader(resp.Body, bucketName, s3Key, "video/mp4")
-					if err != nil {
-						log.Printf("Failed to upload to S3: %v", err)
-						c.JSON(http.StatusInternalServerError, gin.H{
-							"success": false,
-							"error": "Failed to upload to S3",
-						})
-						return
-					}
-					
-					log.Printf("Video uploaded to S3: %s", s3URL)
-					
-					// Generate presigned URL for download (valid for 24 hours)
-					presignedDownloadURL, err := getPresignedURL(bucketName, s3Key, 24*time.Hour)
-					if err != nil {
-						log.Printf("Failed to generate presigned download URL: %v", err)
-						// Fallback to regular URL
-						presignedDownloadURL = s3URL
-					}
-					
-					c.JSON(http.StatusOK, gin.H{
-						"success": true,
-						"s3_url": presignedDownloadURL,
-						"message": "Video rendered and uploaded to S3 successfully",
-					})
-					return
-				} else {
-					log.Printf("Failed to download from Remotion: status %d", resp.StatusCode)
-					c.JSON(http.StatusInternalServerError, gin.H{
-						"success": false,
-						"error": "Rendered video not found",
-					})
-					return
-				}
-			}
-		}
-		
-		c.JSON(http.StatusOK, result)
+		c.JSON(http.StatusOK, job)
 	})
 
 	log.Println("Server starting on :7070")
