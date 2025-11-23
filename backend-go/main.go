@@ -198,18 +198,88 @@ func processRenderJob(jobID string) {
 	}
 }
 
-// triggerFargateRenderTask triggers an ECS Fargate task for rendering
+// triggerFargateRenderTask triggers rendering via Remotion service
 func triggerFargateRenderTask(jobID, videoURL string, captions []Caption, style, bucketName string) error {
-	// For now, mark as completed (will implement ECS task trigger next)
-	time.Sleep(2 * time.Second) // Simulate processing
+	remotionURL := os.Getenv("RENDER_REMOTION_URL")
+	if remotionURL == "" {
+		remotionURL = "http://localhost:3000"
+	}
+
+	renderReq := map[string]interface{}{
+		"videoUrl": videoURL,
+		"captions": captions,
+		"style":    style,
+		"outPath":  fmt.Sprintf("out/video_%s.mp4", jobID),
+	}
+
+	jsonData, _ := json.Marshal(renderReq)
+	
+	httpReq, err := http.NewRequest("POST", remotionURL+"/render", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create render request: %v", err)
+	}
+	
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("x-api-key", os.Getenv("RENDER_API_KEY"))
+	
+	client := &http.Client{Timeout: 10 * time.Minute}
+	resp, err := client.Do(httpReq)
+	
+	if err != nil {
+		return fmt.Errorf("remotion service unavailable: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
 	
 	job := renderJobs[jobID]
-	job.Status = "completed"
-	job.OutputURL = "https://example.com/output.mp4" // Placeholder
-	job.UpdatedAt = time.Now()
 	
-	log.Printf("Job %s completed successfully", jobID)
-	return nil
+	if success, ok := result["success"].(bool); ok && success {
+		if outPath, ok := result["outPath"].(string); ok {
+			filename := filepath.Base(outPath)
+			downloadURL := remotionURL + "/download/" + filename
+			
+			resp, err := http.Get(downloadURL)
+			if err != nil {
+				job.Status = "failed"
+				job.Error = fmt.Sprintf("Failed to download rendered video: %v", err)
+				job.UpdatedAt = time.Now()
+				return err
+			}
+			defer resp.Body.Close()
+			
+			if resp.StatusCode == http.StatusOK {
+				s3Key := fmt.Sprintf("output/%s", filename)
+				s3URL, err := uploadToS3FromReader(resp.Body, bucketName, s3Key, "video/mp4")
+				if err != nil {
+					job.Status = "failed"
+					job.Error = fmt.Sprintf("Failed to upload to S3: %v", err)
+					job.UpdatedAt = time.Now()
+					return err
+				}
+				
+				log.Printf("Video uploaded to S3: %s", s3URL)
+				
+				presignedDownloadURL, err := getPresignedURL(bucketName, s3Key, 24*time.Hour)
+				if err != nil {
+					presignedDownloadURL = s3URL
+				}
+				
+				job.Status = "completed"
+				job.OutputURL = presignedDownloadURL
+				job.UpdatedAt = time.Now()
+				
+				log.Printf("Job %s completed successfully", jobID)
+				return nil
+			}
+		}
+	}
+	
+	job.Status = "failed"
+	job.Error = "Render failed"
+	job.UpdatedAt = time.Now()
+	return fmt.Errorf("render failed")
 }
 
 func main() {
