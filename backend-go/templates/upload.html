@@ -50,9 +50,9 @@
             </button>
         </div>
 
-        <!-- Style Selection & Preview -->
+        <!-- Style Selection & Render -->
         <div id="render-section" class="bg-white rounded-lg shadow-md p-6 mb-6 hidden">
-            <h2 class="text-2xl font-semibold mb-4">4. Style & Preview</h2>
+            <h2 class="text-2xl font-semibold mb-4">4. Render Video</h2>
             
             <div class="mb-4">
                 <label class="block text-sm font-medium text-gray-700 mb-2">Caption Style:</label>
@@ -63,22 +63,28 @@
                 </select>
             </div>
 
-            <div class="mb-4">
-                <h3 class="text-lg font-medium mb-2">Preview:</h3>
-                <div id="preview-area" class="bg-gray-100 p-4 rounded-md">
-                    <video id="preview-video" controls class="w-full max-w-2xl mx-auto"></video>
-                </div>
-            </div>
-
             <button id="render-btn" 
                     class="bg-purple-600 text-white px-6 py-2 rounded-md hover:bg-purple-700 transition">
                 Render Final MP4
             </button>
             <div id="render-status" class="mt-4"></div>
         </div>
+
+        <!-- Preview Section (shown after render) -->
+        <div id="preview-section" class="bg-white rounded-lg shadow-md p-6 mb-6 hidden">
+            <h2 class="text-2xl font-semibold mb-4">5. Preview & Download</h2>
+            <div class="mb-4">
+                <h3 class="text-lg font-medium mb-2">Rendered Video Preview:</h3>
+                <div id="preview-area" class="bg-gray-100 p-4 rounded-md">
+                    <video id="preview-video" controls class="w-full max-w-2xl mx-auto"></video>
+                </div>
+            </div>
+            <div id="download-section"></div>
+        </div>
     </div>
 
     <script>
+        const BACKEND_URL = 'http://video-captioning-remotion-alb-357006721.us-east-1.elb.amazonaws.com:7070';
         let uploadedFileUrl = '';
         let uploadedS3Key = '';
         let uploadedS3Url = '';
@@ -95,7 +101,7 @@
             statusDiv.innerHTML = '<p class="text-blue-600">Uploading to S3...</p>';
             
             try {
-                const response = await fetch('/upload', {
+                const response = await fetch(`${BACKEND_URL}/upload`, {
                     method: 'POST',
                     body: formData
                 });
@@ -107,18 +113,6 @@
                     uploadedFileUrl = data.fileUrl;
                     statusDiv.innerHTML = `<p class="text-green-600">✓ Uploaded to S3 successfully!</p>`;
                     document.getElementById('transcribe-section').classList.remove('hidden');
-                    
-                    // Get presigned URL for preview
-                    fetch('/get-presigned-url', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ s3Key: data.s3Key })
-                    }).then(res => res.json()).then(presignedData => {
-                        if (presignedData.url) {
-                            uploadedPresignedUrl = presignedData.url;
-                            document.getElementById('preview-video').src = presignedData.url;
-                        }
-                    });
                 } else {
                     statusDiv.innerHTML = `<p class="text-red-600">Error: ${data.error}</p>`;
                 }
@@ -133,7 +127,7 @@
             statusDiv.innerHTML = '<p class="text-blue-600">Transcribing... This may take a minute.</p>';
             
             try {
-                const response = await fetch('/transcribe', {
+                const response = await fetch(`${BACKEND_URL}/transcribe`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ 
@@ -177,7 +171,7 @@
             statusDiv.innerHTML = '<p class="text-blue-600">Starting render job...</p>';
             
             try {
-                const response = await fetch('/render-job', {
+                const response = await fetch(`${BACKEND_URL}/render-job`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -210,17 +204,27 @@
                 attempts++;
                 
                 try {
-                    const response = await fetch(`/render-job/${jobId}`);
+                    const response = await fetch(`${BACKEND_URL}/render-job/${jobId}`);
                     const job = await response.json();
                     
                     if (job.status === 'completed') {
                         clearInterval(interval);
-                        statusDiv.innerHTML = `
-                            <p class="text-green-600 mb-2">✓ Video rendered successfully!</p>
-                            <a href="${job.outputUrl}" target="_blank" class="inline-block bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
-                                View/Download from S3
+                        statusDiv.innerHTML = `<p class="text-green-600 mb-2">✓ Video rendered successfully!</p>`;
+                        
+                        // Show preview section with rendered video
+                        document.getElementById('preview-section').classList.remove('hidden');
+                        document.getElementById('preview-video').src = job.outputUrl;
+                        document.getElementById('preview-video').load();
+                        
+                        // Add download button
+                        document.getElementById('download-section').innerHTML = `
+                            <a href="${job.outputUrl}" download class="inline-block bg-blue-600 text-white px-6 py-3 rounded-md hover:bg-blue-700 transition">
+                                Download Rendered Video
                             </a>
                         `;
+                        
+                        // Scroll to preview
+                        document.getElementById('preview-section').scrollIntoView({ behavior: 'smooth' });
                     } else if (job.status === 'failed') {
                         clearInterval(interval);
                         statusDiv.innerHTML = `<p class="text-red-600">Render failed: ${job.error || 'Unknown error'}</p>`;

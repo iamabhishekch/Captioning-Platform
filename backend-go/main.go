@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/s3"
@@ -75,18 +74,14 @@ type AssemblyAITranscriptResponse struct {
 
 // uploadToS3FromReader uploads data from an io.Reader to S3 bucket
 func uploadToS3FromReader(reader io.Reader, bucketName, key, contentType string) (string, error) {
-	awsAccessKey := os.Getenv("AWS_ACCESS_KEY_ID")
-	awsSecretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
 	awsRegion := os.Getenv("AWS_REGION")
-	
 	if awsRegion == "" {
 		awsRegion = "us-east-1"
 	}
 	
-	// Create AWS session
+	// Create AWS session using IAM role (no credentials needed)
 	sess, err := session.NewSession(&aws.Config{
-		Region:      aws.String(awsRegion),
-		Credentials: credentials.NewStaticCredentials(awsAccessKey, awsSecretKey, ""),
+		Region: aws.String(awsRegion),
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to create AWS session: %v", err)
@@ -119,18 +114,14 @@ func uploadToS3FromReader(reader io.Reader, bucketName, key, contentType string)
 
 // getPresignedURL generates a presigned URL for S3 object access
 func getPresignedURL(bucketName, key string, expiration time.Duration) (string, error) {
-	awsAccessKey := os.Getenv("AWS_ACCESS_KEY_ID")
-	awsSecretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
 	awsRegion := os.Getenv("AWS_REGION")
-	
 	if awsRegion == "" {
 		awsRegion = "us-east-1"
 	}
 	
-	// Create AWS session
+	// Create AWS session using IAM role (no credentials needed)
 	sess, err := session.NewSession(&aws.Config{
-		Region:      aws.String(awsRegion),
-		Credentials: credentials.NewStaticCredentials(awsAccessKey, awsSecretKey, ""),
+		Region: aws.String(awsRegion),
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to create AWS session: %v", err)
@@ -399,13 +390,9 @@ func main() {
 		}
 		
 		var err error
+		// Use IAM role credentials (no static credentials needed)
 		awsSession, err = session.NewSession(&aws.Config{
 			Region: aws.String(awsRegion),
-			Credentials: credentials.NewStaticCredentials(
-				os.Getenv("AWS_ACCESS_KEY_ID"),
-				os.Getenv("AWS_SECRET_ACCESS_KEY"),
-				"",
-			),
 		})
 		if err != nil {
 			log.Printf("Warning: Failed to create AWS session: %v", err)
@@ -420,6 +407,26 @@ func main() {
 	os.MkdirAll("static", 0755)
 
 	r := gin.Default()
+	
+	// CORS middleware - must be before routes
+	r.Use(func(c *gin.Context) {
+		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		c.Writer.Header().Set("Access-Control-Max-Age", "86400")
+		
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+		
+		c.Next()
+	})
+	
+	// Handle OPTIONS for all routes
+	r.OPTIONS("/*path", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
 	
 	// Serve static files
 	r.Static("/static", "./static")

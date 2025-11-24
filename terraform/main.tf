@@ -637,7 +637,19 @@ resource "aws_lb_target_group" "backend" {
   }
 }
 
-# ALB Listener for Backend
+# ALB Listener for Backend on port 80
+resource "aws_lb_listener" "backend_80" {
+  load_balancer_arn = aws_lb.remotion.arn
+  port              = "80"
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.backend.arn
+  }
+}
+
+# ALB Listener for Backend on port 7070 (legacy)
 resource "aws_lb_listener" "backend" {
   load_balancer_arn = aws_lb.remotion.arn
   port              = "7070"
@@ -687,3 +699,59 @@ output "api_gateway_url" {
   value       = aws_apigatewayv2_api.backend.api_endpoint
   description = "Public API Gateway URL"
 }
+
+# S3 bucket for static website hosting
+resource "random_id" "bucket_suffix" {
+  byte_length = 4
+}
+
+resource "aws_s3_bucket" "frontend" {
+  bucket = "video-captioning-frontend-${random_id.bucket_suffix.hex}"
+}
+
+resource "aws_s3_bucket_public_access_block" "frontend" {
+  bucket = aws_s3_bucket.frontend.id
+
+  block_public_acls       = false
+  block_public_policy     = false
+  ignore_public_acls      = false
+  restrict_public_buckets = false
+}
+
+resource "aws_s3_bucket_website_configuration" "frontend" {
+  bucket = aws_s3_bucket.frontend.id
+
+  index_document {
+    suffix = "index.html"
+  }
+}
+
+resource "aws_s3_bucket_policy" "frontend" {
+  bucket = aws_s3_bucket.frontend.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "PublicReadGetObject"
+        Effect    = "Allow"
+        Principal = "*"
+        Action    = "s3:GetObject"
+        Resource  = "${aws_s3_bucket.frontend.arn}/*"
+      }
+    ]
+  })
+
+  depends_on = [aws_s3_bucket_public_access_block.frontend]
+}
+
+output "frontend_url" {
+  value       = "http://${aws_s3_bucket.frontend.bucket}.s3-website-${var.aws_region}.amazonaws.com"
+  description = "Public frontend URL"
+}
+
+output "frontend_bucket" {
+  value       = aws_s3_bucket.frontend.bucket
+  description = "Frontend S3 bucket name"
+}
+
