@@ -1,166 +1,172 @@
 # Video Captioning Platform
 
-A serverless video captioning platform with Hinglish support, built with Go, AssemblyAI, and Remotion.
+A serverless video captioning platform that automatically generates and renders captions for videos using AI.
 
-## Author
+**Author:** Abhishek Chaurasiya
 
-Abhishek Chaurasiya
+## Live Demo
 
-## Overview
+🌐 **Frontend:** http://video-captioning-frontend-a02911db.s3-website-us-east-1.amazonaws.com
 
-This platform automatically generates and renders captions for videos with support for mixed Hindi-English (Hinglish) content. Upload a video, generate captions using AI, edit them if needed, and export with professional styling.
+## What It Does
+
+Upload a video → AI generates captions → Edit if needed → Render with captions → Download
 
 ## Architecture
 
-**Serverless & Scalable:**
+**Serverless AWS Stack:**
 
-- Backend API (Go) → SQS Queue → Lambda Workers → S3 Output
-- DynamoDB for job status tracking
-- Pay-per-use pricing (~$2-5/month for moderate usage)
-- Auto-scales from 0 to 1000s of concurrent renders
+- **Frontend:** S3 Static Website (HTML/CSS/JS)
+- **Backend API:** Go on ECS Fargate (auto-scales)
+- **Video Rendering:** Remotion on ECS Fargate
+- **Async Processing:** Lambda + SQS Queue
+- **Storage:** S3 for videos
+- **Database:** DynamoDB for job tracking
+- **Load Balancer:** ALB for traffic distribution
 
-**Deployment Modes:**
+**Why This Stack:**
 
-1. **Local Mode**: In-memory job queue with Docker Compose
-2. **AWS Mode**: SQS + Lambda + DynamoDB for production
+- **Go Backend:** Fast, efficient, single binary deployment
+- **ECS Fargate:** Serverless containers, no server management
+- **Lambda + SQS:** Async processing, scales automatically
+- **S3 + DynamoDB:** Cheap storage and fast queries
+- **Remotion:** React-based video rendering with precise control
 
 ## Features
 
-- Upload MP4 videos to AWS S3
+- Upload MP4 videos
 - Auto-generate captions using AssemblyAI
-- Support for Hinglish (Hindi Devanagari + English)
+- Support for Hinglish (Hindi + English)
 - Edit captions before rendering
 - Three caption styles: Bottom, Top Bar, Karaoke
-- Async rendering with job status tracking
-- Preview videos with presigned URLs
-- Export captioned videos
+- Real-time job status tracking
+- Preview and download rendered videos
 
 ## Tech Stack
 
-- **Backend**: Go 1.21 with Gin framework
-- **Frontend**: HTML, htmx, Tailwind CSS
-- **Transcription**: AssemblyAI API
-- **Video Rendering**: Remotion (React-based)
-- **Storage**: AWS S3
-- **Queue**: AWS SQS
-- **Compute**: AWS Lambda (Node.js 18)
-- **Database**: DynamoDB
-- **IaC**: Terraform with S3 backend
-- **CI/CD**: GitHub Actions
+**Backend:**
 
-## Prerequisites
+- Go 1.21 with Gin framework
+- AWS SDK for S3, SQS, DynamoDB
+- AssemblyAI for transcription
 
-- Go 1.21 or higher
-- Node.js 18 or higher
-- AssemblyAI API key
-- AWS account with S3 bucket
+**Frontend:**
 
-## Environment Variables
+- HTML, Tailwind CSS, Vanilla JavaScript
+- Hosted on S3 as static website
 
-Create a `.env` file:
+**Video Rendering:**
 
-```env
-# Required
-ASSEMBLYAI_KEY=your_assemblyai_api_key
-S3_BUCKET=your-bucket-name
-AWS_ACCESS_KEY_ID=your-aws-key
-AWS_SECRET_ACCESS_KEY=your-aws-secret
-AWS_REGION=us-east-1
+- Remotion (React + TypeScript)
+- Node.js 18 Express server
 
-# Local Mode (Docker Compose)
-RENDER_REMOTION_URL=http://remotion-service:3000
-RENDER_API_KEY=secure_key_12345
+**Infrastructure:**
 
-# AWS Mode (Production - Optional)
-SQS_QUEUE_URL=https://sqs.us-east-1.amazonaws.com/YOUR_ACCOUNT/video-captioning-render-queue
-DYNAMODB_TABLE=video-captioning-jobs
-```
+- Terraform for IaC
+- GitHub Actions for CI/CD
+- AWS: ECS, Lambda, S3, SQS, DynamoDB, ALB
+
+## Deployment
+
+**Fully Automated CI/CD:**
+
+Push to `main` or `dev/aws-deploy` branch triggers:
+
+1. Backend Docker build → Push to ECR → Deploy to ECS
+2. Remotion Docker build → Push to ECR → Deploy to ECS
+3. Lambda function package → Deploy to AWS Lambda
+4. Frontend templates → Sync to S3
+
+**Infrastructure:**
+
+- Managed by Terraform
+- One-time setup, then automated deployments
 
 ## Local Development
 
-### Using Docker Compose (Recommended)
+### Using Docker Compose
 
 ```bash
-docker-compose up -d
-```
+# Create .env file with your credentials
+cp .env.example .env
 
-Access at http://localhost:7070
+# Start all services
+docker-compose up -d
+
+# Access at http://localhost:7070
+```
 
 ### Manual Setup
 
-Terminal 1 - Backend:
+**Terminal 1 - Backend:**
 
 ```bash
 cd backend-go
 go run main.go
 ```
 
-Terminal 2 - Remotion Service:
+**Terminal 2 - Remotion:**
 
 ```bash
 cd remotion-app
 npm run server
 ```
 
-## Deployment
+## Environment Variables
 
-### AWS ECS Fargate
+```env
+# Required
+ASSEMBLYAI_KEY=your_assemblyai_api_key
+S3_BUCKET=your-bucket-name
+AWS_REGION=us-east-1
 
-The application is deployed on AWS ECS Fargate with automatic updates via GitHub Actions.
+# AWS Mode (Production)
+SQS_QUEUE_URL=https://sqs.us-east-1.amazonaws.com/ACCOUNT/queue-name
+DYNAMODB_TABLE=video-captioning-jobs
 
-Live URL: http://44.202.110.90:7070
-
-Services:
-
-- Backend: 1 vCPU, 2GB RAM
-- Remotion: 2 vCPU, 4GB RAM
-
-### CI/CD Pipeline
-
-Every push to main branch:
-
-1. Builds Docker images
-2. Pushes to Docker Hub
-3. Deploys to AWS ECS Fargate
-
-GitHub Secrets required:
-
-- DOCKER_USERNAME
-- DOCKER_PASSWORD
-- AWS_ACCESS_KEY_ID
-- AWS_SECRET_ACCESS_KEY
+# Local Mode (Docker)
+RENDER_REMOTION_URL=http://remotion-service:3000
+RENDER_API_KEY=secure_key_12345
+```
 
 ## Project Structure
 
 ```
-/backend-go           - Go backend server
-  ├── main.go         - API endpoints
-  ├── templates/      - HTML UI
-  └── Dockerfile      - Backend container
+/backend-go              - Go backend API
+  ├── main.go            - API endpoints & logic
+  ├── templates/         - Frontend HTML
+  └── Dockerfile         - Container image
 
-/remotion-app         - Remotion rendering service
-  ├── server/         - Express server
-  ├── src/            - Remotion compositions
-  └── Dockerfile      - Remotion container
+/remotion-app            - Video rendering service
+  ├── server/            - Express API server
+  ├── src/               - Remotion compositions
+  └── Dockerfile         - Container image
 
-/.github/workflows    - CI/CD pipelines
+/lambda-worker           - Async job processor
+  └── index.js           - Lambda handler
+
+/terraform               - Infrastructure as Code
+  └── main.tf            - AWS resources
+
+/.github/workflows       - CI/CD pipelines
 ```
 
 ## API Endpoints
 
-- POST /upload - Upload video to S3
-- POST /get-presigned-url - Get presigned URL for preview
-- POST /transcribe - Generate captions with AssemblyAI
-- POST /render-job - Render video with captions
-- GET /health - Health check
+- `POST /upload` - Upload video to S3
+- `POST /transcribe` - Generate captions with AI
+- `POST /render-job` - Create render job
+- `GET /render-job/:id` - Check job status
+- `POST /get-presigned-url` - Get video preview URL
+- `GET /health` - Health check
 
 ## Caption Styles
 
-1. Bottom - Classic centered subtitles with outline
-2. Top Bar - News-style top bar with text
-3. Karaoke - Word-by-word highlighting
+1. **Bottom** - Classic centered subtitles
+2. **Top Bar** - News-style top banner
+3. **Karaoke** - Word-by-word highlighting
 
 ## Contact
 
-Abhishek Chaurasiya
+**Abhishek Chaurasiya**  
 Email: chaurasiyaa750@gmail.com
