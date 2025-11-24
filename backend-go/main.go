@@ -16,7 +16,9 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
@@ -43,7 +45,14 @@ type RenderJob struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
-var renderJobs = make(map[string]*RenderJob)
+var (
+	renderJobs    = make(map[string]*RenderJob)
+	sqsQueueURL   string
+	dynamoDBTable string
+	awsSession    *session.Session
+	sqsClient     *sqs.SQS
+	dynamoClient  *dynamodb.DynamoDB
+)
 
 // AssemblyAI response structures
 type AssemblyAIUploadResponse struct {
@@ -159,6 +168,93 @@ func uploadToS3(filePath, bucketName, key string) (string, error) {
 	}
 	
 	return uploadToS3FromReader(file, bucketName, key, contentType)
+}
+
+// saveToDynamoDB saves job to DynamoDB
+func saveToDynamoDB(job *RenderJob) error {
+	item := map[string]*dynamodb.AttributeValue{
+		"jobId":     {S: aws.String(job.ID)},
+		"status":    {S: aws.String(job.Status)},
+		"videoUrl":  {S: aws.String(job.VideoURL)},
+		"s3Key":     {S: aws.String(job.S3Key)},
+		"style":     {S: aws.String(job.Style)},
+		"createdAt": {S: aws.String(job.CreatedAt.Format(time.RFC3339))},
+		"updatedAt": {S: aws.String(job.UpdatedAt.Format(time.RFC3339))},
+	}
+
+	// Add captions as JSON
+	captionsJSON, _ := json.Marshal(job.Captions)
+	item["captions"] = &dynamodb.AttributeValue{S: aws.String(string(captionsJSON))}
+
+	_, err := dynamoClient.PutItem(&dynamodb.PutItemInput{
+		TableName: aws.String(dynamoDBTable),
+		Item:      item,
+	})
+	return err
+}
+
+// sendToSQS sends job to SQS queue
+func sendToSQS(job *RenderJob) error {
+	messageBody, _ := json.Marshal(map[string]interface{}{
+		"jobId":    job.ID,
+		"videoUrl": job.VideoURL,
+		"s3Key":    job.S3Key,
+		"captions": job.Captions,
+		"style":    job.Style,
+	})
+
+	_, err := sqsClient.SendMessage(&sqs.SendMessageInput{
+		QueueUrl:    aws.String(sqsQueueURL),
+		MessageBody: aws.String(string(messageBody)),
+	})
+	return err
+}
+
+// getFromDynamoDB retrieves job from DynamoDB
+func getFromDynamoDB(jobID string) (*RenderJob, error) {
+	result, err := dynamoClient.GetItem(&dynamodb.GetItemInput{
+		TableName: aws.String(dynamoDBTable),
+		Key: map[string]*dynamodb.AttributeValue{
+			"jobId": {S: aws.String(jobID)},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result.Item == nil {
+		return nil, fmt.Errorf("job not found")
+	}
+
+	job := &RenderJob{
+		ID:     *result.Item["jobId"].S,
+		Status: *result.Item["status"].S,
+	}
+	if result.Item["videoUrl"] != nil {
+		job.VideoURL = *result.Item["videoUrl"].S
+	}
+	if result.Item["s3Key"] != nil {
+		job.S3Key = *result.Item["s3Key"].S
+	}
+	if result.Item["style"] != nil {
+		job.Style = *result.Item["style"].S
+	}
+	if result.Item["outputUrl"] != nil {
+		job.OutputURL = *result.Item["outputUrl"].S
+	}
+	if result.Item["error"] != nil {
+		job.Error = *result.Item["error"].S
+	}
+	if result.Item["captions"] != nil {
+		json.Unmarshal([]byte(*result.Item["captions"].S), &job.Captions)
+	}
+	if result.Item["createdAt"] != nil {
+		job.CreatedAt, _ = time.Parse(time.RFC3339, *result.Item["createdAt"].S)
+	}
+	if result.Item["updatedAt"] != nil {
+		job.UpdatedAt, _ = time.Parse(time.RFC3339, *result.Item["updatedAt"].S)
+	}
+
+	return job, nil
 }
 
 // processRenderJob processes a render job asynchronously using ECS Fargate
@@ -290,6 +386,34 @@ func main() {
 	apiKey := os.Getenv("ASSEMBLYAI_KEY")
 	if apiKey == "" {
 		log.Fatal("ASSEMBLYAI_KEY environment variable is required")
+	}
+
+	// Initialize AWS clients
+	sqsQueueURL = os.Getenv("SQS_QUEUE_URL")
+	dynamoDBTable = os.Getenv("DYNAMODB_TABLE")
+	
+	if sqsQueueURL != "" && dynamoDBTable != "" {
+		awsRegion := os.Getenv("AWS_REGION")
+		if awsRegion == "" {
+			awsRegion = "us-east-1"
+		}
+		
+		var err error
+		awsSession, err = session.NewSession(&aws.Config{
+			Region: aws.String(awsRegion),
+			Credentials: credentials.NewStaticCredentials(
+				os.Getenv("AWS_ACCESS_KEY_ID"),
+				os.Getenv("AWS_SECRET_ACCESS_KEY"),
+				"",
+			),
+		})
+		if err != nil {
+			log.Printf("Warning: Failed to create AWS session: %v", err)
+		} else {
+			sqsClient = sqs.New(awsSession)
+			dynamoClient = dynamodb.New(awsSession)
+			log.Printf("AWS clients initialized - SQS: %s, DynamoDB: %s", sqsQueueURL, dynamoDBTable)
+		}
 	}
 
 	// Create necessary directories (minimal, only for static assets)
@@ -515,10 +639,30 @@ func main() {
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
 		}
-		renderJobs[jobID] = job
 
-		// Start async processing
-		go processRenderJob(jobID)
+		// Use SQS + DynamoDB if configured, otherwise use in-memory
+		if sqsClient != nil && dynamoClient != nil {
+			// Save to DynamoDB
+			err := saveToDynamoDB(job)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save job"})
+				return
+			}
+
+			// Send to SQS
+			err = sendToSQS(job)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to queue job"})
+				return
+			}
+
+			log.Printf("Job %s queued to SQS", jobID)
+		} else {
+			// Fallback to in-memory processing
+			renderJobs[jobID] = job
+			go processRenderJob(jobID)
+			log.Printf("Job %s processing in-memory", jobID)
+		}
 
 		c.JSON(http.StatusOK, gin.H{
 			"jobId":  jobID,
@@ -530,6 +674,17 @@ func main() {
 	// GET /render-job/:id - Get job status
 	r.GET("/render-job/:id", func(c *gin.Context) {
 		jobID := c.Param("id")
+		
+		// Try DynamoDB first if configured
+		if dynamoClient != nil {
+			job, err := getFromDynamoDB(jobID)
+			if err == nil {
+				c.JSON(http.StatusOK, job)
+				return
+			}
+		}
+		
+		// Fallback to in-memory
 		job, exists := renderJobs[jobID]
 		if !exists {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})

@@ -1,0 +1,9 @@
+{
+  "name": "video-render-worker",
+  "version": "1.0.0",
+  "description": "Lambda worker for video rendering",
+  "main": "index.js",
+  "dependencies": {
+    "aws-sdk": "^2.1691.0"
+  }
+}

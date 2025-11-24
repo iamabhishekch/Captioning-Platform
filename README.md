@@ -1,6 +1,6 @@
 # Video Captioning Platform
 
-A production-ready video captioning platform with Hinglish support, built with Go, AssemblyAI, and Remotion.
+A serverless video captioning platform with Hinglish support, built with Go, AssemblyAI, and Remotion.
 
 ## Author
 
@@ -10,6 +10,20 @@ Abhishek Chaurasiya
 
 This platform automatically generates and renders captions for videos with support for mixed Hindi-English (Hinglish) content. Upload a video, generate captions using AI, edit them if needed, and export with professional styling.
 
+## Architecture
+
+**Serverless & Scalable:**
+
+- Backend API (Go) → SQS Queue → Lambda Workers → S3 Output
+- DynamoDB for job status tracking
+- Pay-per-use pricing (~$2-5/month for moderate usage)
+- Auto-scales from 0 to 1000s of concurrent renders
+
+**Deployment Modes:**
+
+1. **Local Mode**: In-memory job queue with Docker Compose
+2. **AWS Mode**: SQS + Lambda + DynamoDB for production
+
 ## Features
 
 - Upload MP4 videos to AWS S3
@@ -17,18 +31,22 @@ This platform automatically generates and renders captions for videos with suppo
 - Support for Hinglish (Hindi Devanagari + English)
 - Edit captions before rendering
 - Three caption styles: Bottom, Top Bar, Karaoke
+- Async rendering with job status tracking
 - Preview videos with presigned URLs
 - Export captioned videos
 
 ## Tech Stack
 
-- Backend: Go 1.21 with Gin framework
-- Frontend: HTML, htmx, Tailwind CSS
-- Transcription: AssemblyAI API
-- Video Rendering: Remotion (React-based)
-- Storage: AWS S3
-- Deployment: AWS ECS Fargate
-- CI/CD: GitHub Actions
+- **Backend**: Go 1.21 with Gin framework
+- **Frontend**: HTML, htmx, Tailwind CSS
+- **Transcription**: AssemblyAI API
+- **Video Rendering**: Remotion (React-based)
+- **Storage**: AWS S3
+- **Queue**: AWS SQS
+- **Compute**: AWS Lambda (Node.js 18)
+- **Database**: DynamoDB
+- **IaC**: Terraform with S3 backend
+- **CI/CD**: GitHub Actions
 
 ## Prerequisites
 
@@ -42,13 +60,20 @@ This platform automatically generates and renders captions for videos with suppo
 Create a `.env` file:
 
 ```env
+# Required
 ASSEMBLYAI_KEY=your_assemblyai_api_key
 S3_BUCKET=your-bucket-name
 AWS_ACCESS_KEY_ID=your-aws-key
 AWS_SECRET_ACCESS_KEY=your-aws-secret
 AWS_REGION=us-east-1
-RENDER_REMOTION_URL=http://localhost:3000
+
+# Local Mode (Docker Compose)
+RENDER_REMOTION_URL=http://remotion-service:3000
 RENDER_API_KEY=secure_key_12345
+
+# AWS Mode (Production - Optional)
+SQS_QUEUE_URL=https://sqs.us-east-1.amazonaws.com/YOUR_ACCOUNT/video-captioning-render-queue
+DYNAMODB_TABLE=video-captioning-jobs
 ```
 
 ## Local Development

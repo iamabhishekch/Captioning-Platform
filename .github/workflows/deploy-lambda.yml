@@ -1,0 +1,62 @@
+name: Deploy Lambda Container
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "lambda-backend/**"
+      - "remotion-app/src/**"
+      - "remotion-app/public/**"
+      - ".github/workflows/deploy-lambda.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Get ECR repository URL
+        id: ecr-url
+        run: |
+          ECR_URL=$(aws ecr describe-repositories --repository-names video-captioning-lambda-render --query 'repositories[0].repositoryUri' --output text 2>/dev/null || echo "")
+          if [ -z "$ECR_URL" ]; then
+            echo "ECR repository not found. Run terraform apply first."
+            exit 1
+          fi
+          echo "ecr_url=$ECR_URL" >> $GITHUB_OUTPUT
+
+      - name: Build Lambda container
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: video-captioning-lambda-render
+          IMAGE_TAG: latest
+        run: |
+          docker build -f lambda-backend/Dockerfile -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+      - name: Update Lambda function
+        run: |
+          aws lambda update-function-code \
+            --function-name video-captioning-render-worker \
+            --image-uri ${{ steps.ecr-url.outputs.ecr_url }}:latest
+
+      - name: Wait for Lambda update
+        run: |
+          aws lambda wait function-updated \
+            --function-name video-captioning-render-worker
+
+      - name: Deployment complete
+        run: echo "Lambda function deployed successfully!"

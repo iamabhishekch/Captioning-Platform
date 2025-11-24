@@ -1,0 +1,157 @@
+name: Deploy to AWS
+
+on:
+  push:
+    branches:
+      - dev/aws-deploy
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY_BACKEND: video-captioning-backend
+  ECR_REPOSITORY_REMOTION: video-captioning-remotion
+  ECS_CLUSTER: video-captioning-cluster
+  ECS_SERVICE_BACKEND: video-captioning-backend
+  ECS_SERVICE_REMOTION: video-captioning-remotion
+  LAMBDA_FUNCTION: video-captioning-render-worker
+
+jobs:
+  deploy-backend:
+    name: Deploy Backend
+    runs-on: ubuntu-latest
+    if: contains(github.event.head_commit.modified, 'backend-go/') || contains(github.event.head_commit.added, 'backend-go/')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Backend image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker buildx build --platform linux/amd64 \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:$IMAGE_TAG \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:latest \
+            -f backend-go/Dockerfile backend-go --push
+          echo "Backend image pushed: $ECR_REGISTRY/$ECR_REPOSITORY_BACKEND:$IMAGE_TAG"
+
+      - name: Update ECS service
+        run: |
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_SERVICE_BACKEND \
+            --force-new-deployment \
+            --region $AWS_REGION
+
+  deploy-remotion:
+    name: Deploy Remotion
+    runs-on: ubuntu-latest
+    if: contains(github.event.head_commit.modified, 'remotion-app/') || contains(github.event.head_commit.added, 'remotion-app/')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Remotion image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker buildx build --platform linux/amd64 \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY_REMOTION:$IMAGE_TAG \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY_REMOTION:latest \
+            -f remotion-app/Dockerfile remotion-app --push
+          echo "Remotion image pushed: $ECR_REGISTRY/$ECR_REPOSITORY_REMOTION:$IMAGE_TAG"
+
+      - name: Update ECS service
+        run: |
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_SERVICE_REMOTION \
+            --force-new-deployment \
+            --region $AWS_REGION
+
+  deploy-lambda:
+    name: Deploy Lambda
+    runs-on: ubuntu-latest
+    if: contains(github.event.head_commit.modified, 'lambda-worker/') || contains(github.event.head_commit.added, 'lambda-worker/')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Package Lambda
+        run: |
+          cd lambda-worker
+          zip -r ../lambda-worker.zip . -x "*.git*"
+          cd ..
+
+      - name: Update Lambda function
+        run: |
+          aws lambda update-function-code \
+            --function-name $LAMBDA_FUNCTION \
+            --zip-file fileb://lambda-worker.zip \
+            --region $AWS_REGION
+
+  deploy-terraform:
+    name: Deploy Infrastructure
+    runs-on: ubuntu-latest
+    if: contains(github.event.head_commit.modified, 'terraform/') || contains(github.event.head_commit.added, 'terraform/')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: |
+          cd terraform
+          terraform init
+
+      - name: Terraform Plan
+        run: |
+          cd terraform
+          terraform plan -out=tfplan
+
+      - name: Terraform Apply
+        run: |
+          cd terraform
+          terraform apply -auto-approve tfplan
