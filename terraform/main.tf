@@ -648,3 +648,42 @@ resource "aws_lb_listener" "backend" {
     target_group_arn = aws_lb_target_group.backend.arn
   }
 }
+
+# API Gateway for public access
+resource "aws_apigatewayv2_api" "backend" {
+  name          = "video-captioning-api"
+  protocol_type = "HTTP"
+}
+
+resource "aws_apigatewayv2_vpc_link" "backend" {
+  name               = "video-captioning-vpc-link"
+  security_group_ids = [aws_security_group.backend.id]
+  subnet_ids         = [aws_default_subnet.default_az1.id, aws_default_subnet.default_az2.id]
+}
+
+resource "aws_apigatewayv2_integration" "backend" {
+  api_id             = aws_apigatewayv2_api.backend.id
+  integration_type   = "HTTP_PROXY"
+  integration_method = "ANY"
+  integration_uri    = aws_lb_listener.backend.arn
+  connection_type    = "VPC_LINK"
+  connection_id      = aws_apigatewayv2_vpc_link.backend.id
+  payload_format_version = "1.0"
+}
+
+resource "aws_apigatewayv2_route" "backend" {
+  api_id    = aws_apigatewayv2_api.backend.id
+  route_key = "ANY /{proxy+}"
+  target    = "integrations/${aws_apigatewayv2_integration.backend.id}"
+}
+
+resource "aws_apigatewayv2_stage" "backend" {
+  api_id      = aws_apigatewayv2_api.backend.id
+  name        = "$default"
+  auto_deploy = true
+}
+
+output "api_gateway_url" {
+  value       = aws_apigatewayv2_api.backend.api_endpoint
+  description = "Public API Gateway URL"
+}
