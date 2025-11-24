@@ -1,0 +1,76 @@
+🎯 HOW TO ACCESS YOUR VIDEO CAPTIONING PLATFORM
+================================================
+
+The deployed backend is not accessible from your network, but you can use this local HTML interface!
+
+📱 OPTION 1: LOCAL WEB INTERFACE (RECOMMENDED)
+----------------------------------------------
+
+1. Open the file in your browser:
+   open local-frontend.html
+
+2. Enter your AWS credentials:
+   - AWS Access Key ID: (from your .env file)
+   - AWS Secret Access Key: (from your .env file)
+   - Click "Save Credentials"
+
+3. Upload a video:
+   - Click "Choose File" and select an MP4 video
+   - Click "Upload to S3"
+
+4. Add captions:
+   - Enter captions in format: start,end,text
+   - Example:
+     0.72,3.84,Big man in a suit of armor
+     3.84,6.72,Take that off. What are you?
+   - Choose caption style (bottom/top/karaoke)
+   - Click "Render Video"
+
+5. Wait for completion:
+   - Status updates automatically every 5 seconds
+   - Download button appears when ready (~60 seconds)
+
+🔧 OPTION 2: COMMAND LINE (ALWAYS WORKS)
+-----------------------------------------
+
+Run the test script:
+./test-platform.sh
+
+Or manually:
+aws sqs send-message \
+  --queue-url https://sqs.us-east-1.amazonaws.com/929910138721/video-captioning-render-queue \
+  --message-body '{
+    "jobId": "test-'$(date +%s)'",
+    "videoUrl": "https://go-video-project-685a78d468a5w4e65.s3.us-east-1.amazonaws.com/uploads/sample.mp4",
+    "s3Key": "uploads/sample.mp4",
+    "captions": [{"start": 0.72, "end": 3.84, "text": "Your caption"}],
+    "style": "bottom"
+  }'
+
+✅ WHAT'S DEPLOYED
+------------------
+- Backend API with Web UI (ECS Fargate)
+- Remotion Renderer (ECS Fargate Spot)
+- Lambda Worker (processes jobs)
+- SQS Queue (job queue)
+- DynamoDB (job tracking)
+- S3 (video storage)
+- CI/CD Pipeline (auto-deploy on push)
+
+🎉 TESTED & WORKING
+-------------------
+- Job: complete-platform-1763967406
+- Status: COMPLETED
+- Output: 8.7 MB video
+- Processing time: ~60 seconds
+
+💰 COST
+-------
+~$10-15/month for moderate usage
+
+📖 MORE INFO
+------------
+- FRONTEND_ACCESS.md - Complete guide
+- API_ENDPOINTS.txt - API documentation
+- test-platform.sh - Automated testing
+
