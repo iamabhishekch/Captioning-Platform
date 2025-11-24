@@ -159,14 +159,18 @@ jobs:
 
       - name: Deploy frontend templates to S3
         run: |
+          # Upload upload.html as index.html (main page)
+          aws s3 cp backend-go/templates/upload.html s3://${{ steps.get-bucket.outputs.bucket }}/index.html \
+            --content-type "text/html" \
+            --cache-control "max-age=300"
+
+          # Sync any other HTML/CSS/JS files
           aws s3 sync backend-go/templates/ s3://${{ steps.get-bucket.outputs.bucket }}/ \
             --exclude "*" \
-            --include "*.html" \
             --include "*.css" \
             --include "*.js" \
             --content-type "text/html" \
-            --cache-control "max-age=300" \
-            --delete
+            --cache-control "max-age=300"
 
           echo "Frontend deployed to S3 bucket: ${{ steps.get-bucket.outputs.bucket }}"
 
